@@ -334,15 +334,12 @@ Development (stable) - 172.24.169.101:
     AccountStatement_Timeout: '40'
     AccountStatement_Url: https://api.close.dev.bri.co.id:5556/gateway/apiCustomerHub/1.0/
     ConnectionStrings_AccountConnection_Database: MBTL_ACCOUNT
-    ConnectionStrings_AccountConnection_Password: BAMSCRT@0@0@bKi4U+5ua6dtUMBq2B/S+Q==
     ConnectionStrings_AccountConnection_Server: 172.24.169.100
     ConnectionStrings_AccountConnection_User: mobile_tl_account
     ConnectionStrings_CustomerConnection_Database: MBTL_CUSTOMER
-    ConnectionStrings_CustomerConnection_Password: BAMSCRT@0@0@bKi4U+5ua6dtUMBq2B/S+Q==
     ConnectionStrings_CustomerConnection_Server: 172.24.169.100
     ConnectionStrings_CustomerConnection_User: mobile_tl_customer
     ConnectionStrings_GeneralConnection_Database: MBTL_GENERAL
-    ConnectionStrings_GeneralConnection_Password: BAMSCRT@0@0@bKi4U+5ua6dtUMBq2B/S+Q==
     ConnectionStrings_GeneralConnection_Server: 172.24.169.100
     ConnectionStrings_GeneralConnection_User: mobile_tl_general
     Obras_TellerId: '0452881'
