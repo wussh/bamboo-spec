@@ -692,7 +692,7 @@ Build and Publish Artifacts:
 variables:
   applicationName: mbtl
   projectName: mbtl-bed-account
-  secret_personalAccessSQ: asfasfafaf
+  secret_personalAccessSQ: BAMSCRT@0@0@bKi4U+5ua6dtUMBq2B/S+Q==
   service_name: mbtl-bed-account
   sonarHost: https://sonarqube-enterprise.bri.co.id
   AccountStatement_Channel: BRIMO-TL
