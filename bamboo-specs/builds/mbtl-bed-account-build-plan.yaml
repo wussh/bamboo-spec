@@ -1,0 +1,743 @@
+version: 2
+plan:
+  project-key: MBTL
+  key: MBTLSRVAC
+  name: mbtl-bed-account
+  description: BE service account
+  
+stages:
+  - Code Quality:
+      manual: false
+      final: false
+      jobs:
+        - Scan SAST
+        - Scan Sonarqube
+
+  - Build and Publish Artifacts:
+      manual: false
+      final: false
+      jobs:
+        - Build and Publish Artifacts
+
+triggers:
+- polling:
+    period: '180'
+
+branch-overrides:
+  - dev-sampah:
+      stages:
+        - Build and Publish Artifacts:
+            jobs:
+              - Build and Publish Artifacts
+
+  - dev-test:
+      stages:
+        - Code Quality:
+            jobs:
+              - Scan SAST
+              - Scan Sonarqube
+        - Build and Publish Artifacts:
+            manual: false
+            final: false
+            jobs:
+              - Build and Publish Artifacts
+
+  - dev-stable:
+      stages:
+        - Code Quality:
+            jobs:
+              - Scan SAST
+              - Scan Sonarqube
+        - Build and Publish Artifacts:
+            manual: false
+            final: false
+            jobs:
+              - Build and Publish Artifacts
+
+Scan SAST:
+  key: SS
+  tasks:
+    - script:
+        interpreter: SHELL
+        description: Branch validation (early exit for unsupported branches)
+        scripts:
+          - |
+            #!/bin/bash
+            BRANCH="${bamboo.planRepository.branchName}"
+            if [[ "$BRANCH" != "dev-test" ]] && [[ "$BRANCH" != "dev-stable" ]]; then
+              echo "⏭️  Branch: $BRANCH - SAST scan is NOT REQUIRED"
+              echo "✅ Gracefully exiting (job marked as successful)"
+              exit 0
+            fi
+            echo "✅ Branch: $BRANCH - SAST scan will proceed"
+    
+    - checkout:
+        force-clean-build: false
+        description: Checkout code
+        conditions:
+          - variable:
+              matches:
+                bamboo.planRepository.branchName: "(dev-test|dev-stable)"
+
+    - any-task:
+        plugin-key: com.cx.checkmarx-bamboo-plugin:checkmarx
+        conditions:
+          - variable:
+              matches:
+                bamboo.planRepository.branchName: "(dev-test|dev-stable)"
+        configuration:
+          password: 08GKM6Xf6mxPSki0bhX6nQ==
+          serverUrl: https://sast.bri.co.id
+          enableCriticalSeverity: 'false'
+          intervalBegins: 01:00
+          presetName: High and Medium
+          intervalEnds: 04:00
+          scanControlSection: globalConfigurationControl
+          filterPatterns: '!**/_cvs/**/*, !**/.svn/**/*,   !**/.hg/**/*,   !**/.git/**/*,  !**/.bzr/**/*, !**/bin/**/*,!**/obj/**/*,  !**/backup/**/*, !**/.idea/**/*, !**/*.DS_Store, !**/*.ipr,     !**/*.iws,   !**/*.bak,     !**/*.tmp,       !**/*.aac,      !**/*.aif,      !**/*.iff,     !**/*.m3u,   !**/*.mid,   !**/*.mp3,  !**/*.mpa,     !**/*.ra,        !**/*.wav,      !**/*.wma,      !**/*.3g2,     !**/*.3gp,   !**/*.asf,   !**/*.asx,  !**/*.avi,     !**/*.flv,       !**/*.mov,      !**/*.mp4,      !**/*.mpg,     !**/*.rm,    !**/*.swf,   !**/*.vob,  !**/*.wmv,     !**/*.bmp,       !**/*.gif,      !**/*.jpg,      !**/*.png,     !**/*.psd,   !**/*.tif,   !**/*.swf,  !**/*.jar,     !**/*.zip,       !**/*.rar,      !**/*.exe,      !**/*.dll,     !**/*.pdb,   !**/*.7z,    !**/*.gz,   !**/*.tar.gz,  !**/*.tar,       !**/*.gz,       !**/*.ahtm,     !**/*.ahtml,   !**/*.fhtml, !**/*.hdm,   !**/*.hdml,    !**/*.hsql,      !**/*.ht,       !**/*.hta,      !**/*.htc,     !**/*.htd,   !**/*.war,   !**/*.ear,  !**/*.htmls,   !**/*.ihtml,     !**/*.mht,      !**/*.mhtm,     !**/*.mhtml,   !**/*.ssi,   !**/*.stm,   !**/*.stml,    !**/*.ttml,      !**/*.txn,      !**/*.xhtm,     !**/*.xhtml,   !**/*.class, !**/*.iml,   !**/Checkmarx/Reports/**/* , !**/node_modules/**/*, !**/appsettings*.json'
+          projectName: BRImo Timor Leste - mbtl-bed-account
+          presetId: '3'
+          enableSASTScan: 'true'
+          serverCredentialsSection: customConfigurationServer
+          teamPathName: \CxServer\BRI Group\PT. Bank Rakyat Indonesia Tbk\Divisi APP
+          cxSastSection: customConfigurationCxSAST
+          teamPathId: '7'
+          isSynchronous: 'true'
+          username: ORP
+        description: Run SAST security scan
+  artifact-subscriptions: []
+
+Scan Sonarqube:
+  key: SSQ
+  tasks:
+    - script:
+        interpreter: SHELL
+        description: Branch validation (early exit for unsupported branches)
+        scripts:
+          - |
+            #!/bin/bash
+            BRANCH="${bamboo.planRepository.branchName}"
+            if [[ "$BRANCH" != "dev-test" ]] && [[ "$BRANCH" != "dev-stable" ]]; then
+              echo "⏭️  Branch: $BRANCH - Sonarqube scan is NOT REQUIRED"
+              echo "✅ Gracefully exiting (job marked as successful)"
+              # Avoid noisy artifact publish errors when scan is skipped.
+              mkdir -p .scannerwork
+              exit 0
+            fi
+            echo "✅ Branch: $BRANCH - Sonarqube scan will proceed"
+    
+    - checkout:
+        force-clean-build: false
+        description: Checkout code
+        conditions:
+          - variable:
+              matches:
+                bamboo.planRepository.branchName: "(dev-test|dev-stable)"
+
+    - script:
+        interpreter: SHELL
+        description: Run SonarQube analysis with test coverage
+        conditions:
+          - variable:
+              matches:
+                bamboo.planRepository.branchName: "(dev-test|dev-stable)"
+        scripts:
+          - |-
+            #!/bin/bash
+            set -e
+
+            # Configuration
+            SONAR_HOST="https://sonarqube-enterprise.bri.co.id"
+            SONAR_TOKEN="${bamboo.secret_personalAccessSQ}"
+            PROJECT_KEY="${bamboo.projectName}"
+            PROJECT_NAME="${bamboo.shortPlanName}"
+            BRANCH_NAME="${bamboo.planRepository.branchName}"
+
+            # Proxy Configuration
+            export http_proxy="http://proxy-rgn-prod.bri.co.id:1707"
+            export https_proxy="http://proxy-rgn-prod.bri.co.id:1707"
+            export no_proxy="localhost,127.0.0.1,172.18.*,sonarqube-enterprise.bri.co.id,overseas-nexus.bri.co.id"
+            export PATH="$PATH:/root/.dotnet/tools:/home/bamboo/.dotnet/tools:/home/${USER}/.dotnet/tools"
+
+            # Find solution file (REQUIRED for proper MAIN/TEST project detection)
+            echo "🔍 Searching for solution file..."
+            SOLUTION=$(find . -type f -name "*.sln" | head -n 1)
+            
+            if [[ -z "$SOLUTION" ]]; then
+              echo "❌ ERROR: No .sln file found. SonarQube requires a solution file."
+              exit 1
+            fi
+            
+            echo "✅ Solution found: $SOLUTION"
+            
+            # Use subshell to safely resolve absolute paths (Bamboo-safe)
+            SOLUTION_DIR="$(cd "$(dirname "$SOLUTION")" && pwd)"
+            SOLUTION_FILE="$(basename "$SOLUTION")"
+            
+            # Change to solution directory (ALL Sonar commands must run from here)
+            cd "$SOLUTION_DIR" || { echo "❌ Failed to cd to solution dir"; exit 1; }
+            
+            echo "📁 Working directory: $(pwd)"
+            echo "📄 Solution file: $SOLUTION_FILE"
+
+            # Start SonarQube Scanner
+            echo "🔍 Starting SonarQube scanner..."
+            dotnet sonarscanner begin \
+              /k:"${PROJECT_KEY}" \
+              /n:"${PROJECT_NAME}" \
+              /d:sonar.branch.name="${BRANCH_NAME}" \
+              /d:sonar.host.url="${SONAR_HOST}" \
+              /d:sonar.token="${SONAR_TOKEN}" \
+              /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml" \
+              /d:sonar.exclusions="**/bin/**,**/obj/**,**/*.json,**/Program.cs" \
+              /d:sonar.qualitygate.wait=true \
+              /d:sonar.qualitygate.timeout=120
+
+            # Build solution (SonarQube hooks into this to collect project info)
+            echo "🔨 Building solution..."
+            dotnet build "$SOLUTION_FILE" -c Release
+
+            # Run tests with coverage
+            echo "🧪 Running tests with coverage..."
+            dotnet test "$SOLUTION_FILE" \
+              -c Release \
+              --no-build \
+              --collect:"XPlat Code Coverage" \
+              --results-directory ./TestResults \
+              -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+            # List coverage files for verification
+            echo "📊 Coverage files generated:"
+            find ./TestResults -name "coverage.opencover.xml" -type f 2>/dev/null || echo "⚠️  No coverage files found"
+
+            # End SonarQube Scanner (must run from same directory as begin)
+            echo "📊 Finishing SonarQube analysis..."
+            dotnet sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
+
+            # Display results URL
+            ENCODED_ID=$(echo "${PROJECT_KEY}" | sed 's/:/%3A/g')
+            echo "✅ SonarQube scan complete → ${SONAR_HOST}/dashboard?id=${ENCODED_ID}"
+  artifacts:
+  - name: Sonar PDF Report
+    location: .scannerwork
+    pattern: ${bamboo.shortPlanName}-${bamboo.planRepository.branchName}.pdf
+    shared: false
+    required: false
+  artifact-subscriptions: []
+
+Build and Publish Artifacts:
+  key: BPA
+  tasks:
+    - script:
+        interpreter: SHELL
+        description: Branch validation (early exit for unsupported branches)
+        scripts:
+          - |
+            #!/bin/bash
+            BRANCH="${bamboo.planRepository.branchName}"
+            if [[ "$BRANCH" != "dev-stable" ]] && [[ "$BRANCH" != "dev-sampah" ]]; then
+              echo "⏭️  Branch: $BRANCH - Build is NOT REQUIRED"
+              echo "✅ Gracefully exiting (job marked as successful)"
+              exit 0
+            fi
+            echo "✅ Branch: $BRANCH - Build will proceed"
+    
+    - checkout:
+        force-clean-build: false
+        description: Checkout default repository
+        conditions:
+          - variable:
+              matches:
+                bamboo.planRepository.branchName: "(dev-stable|dev-sampah)"
+
+    - script:
+        interpreter: SHELL
+        description: Build and publish .NET project
+        conditions:
+          - variable:
+              matches:
+                bamboo.planRepository.branchName: "(dev-stable|dev-sampah)"
+        scripts:
+          - |-
+            #!/bin/bash
+            set -e
+
+            # Proxy Configuration
+            export http_proxy="http://proxy-rgn-prod.bri.co.id:1707"
+            export https_proxy="http://proxy-rgn-prod.bri.co.id:1707"
+            export no_proxy="172.18.*,172.24.*,*.bri.co.id"
+
+            echo "🚀 Starting .NET publish (single repo)"
+            echo "--------------------------------------"
+            echo "📦 Repo name   : ${bamboo.planRepository.name}"
+            echo "📦 Working dir : ${bamboo.working.directory}"
+            echo "--------------------------------------"
+
+            # Configuration
+            REPO_NAME="${bamboo.planRepository.name}"
+            SERVICE_NAME="${bamboo.service_name}"
+            BRANCH_NAME="${bamboo.planRepository.branchName}"
+            ROOT_DIR="${bamboo.working.directory}"
+            PROJECT_DIR="$ROOT_DIR"
+            if [ -d "$ROOT_DIR/$REPO_NAME" ]; then
+              PROJECT_DIR="$ROOT_DIR/$REPO_NAME"
+            fi
+            OUTPUT_DIR="$ROOT_DIR/publish/$SERVICE_NAME"
+
+            # Validate project folder
+            if [ ! -d "$PROJECT_DIR" ]; then
+              echo "❌ ERROR: Project directory not found: $PROJECT_DIR"
+              exit 1
+            fi
+
+            mkdir -p "$OUTPUT_DIR"
+
+            # Find main project file
+            CSPROJ=$(find "$PROJECT_DIR" -type f -name "*.csproj" ! -iname "*test*" ! -iname "*.Tests.*" | head -n 1)
+
+            if [ -z "$CSPROJ" ]; then
+              echo "⚠️  No main project found in $REPO_NAME (skipping)"
+              exit 0
+            fi
+
+            echo "📄 Project file: $CSPROJ"
+
+            # Restore dependencies
+            dotnet restore "$CSPROJ"
+
+            # Publish project
+            dotnet publish "$CSPROJ" \
+              -c Release \
+              -r linux-x64 \
+              --self-contained false \
+              -o "$OUTPUT_DIR"
+
+            echo "✅ Publish finished"
+            echo "📦 Artifact content:"
+            ls -lh "$OUTPUT_DIR"
+
+            # Export ALL Bamboo variables dynamically
+            ENV_FILE="$OUTPUT_DIR/.bamboo_env"
+            echo "📝 Exporting ALL Bamboo variables to .bamboo_env"
+            env | grep '^bamboo_' | while IFS='=' read -r k v; do
+              printf "%s=%q\n" "${k#bamboo_}" "$v"
+            done > "$ENV_FILE"
+            echo "✅ Exported $(wc -l < "$ENV_FILE") variables dynamically"
+
+            # Create immutable deployment zip (artifact source of truth)
+            if ! command -v zip >/dev/null 2>&1; then
+              echo "❌ ERROR: 'zip' command not found on agent. Install zip to create deployment artifact."
+              exit 1
+            fi
+
+            ZIP_DIR="$ROOT_DIR/zips"
+            ZIP_NAME="publish-${SERVICE_NAME}-${BRANCH_NAME}.zip"
+
+            mkdir -p "$ZIP_DIR"
+
+            echo "📦 Creating deployment zip: $ZIP_DIR/$ZIP_NAME"
+            (
+              cd "$ROOT_DIR"
+              rm -f "$ZIP_DIR/$ZIP_NAME"
+              zip -r "$ZIP_DIR/$ZIP_NAME" publish
+            )
+
+            echo "✅ Zip ready"
+            ls -lh "$ZIP_DIR/$ZIP_NAME"
+        
+    - script:
+        interpreter: SHELL
+        description: Branch validation for deployment (early exit for non dev-sampah branches)
+        scripts:
+          - |
+            #!/bin/bash
+            BRANCH="${bamboo.planRepository.branchName}"
+            if [[ "$BRANCH" != "dev-sampah" ]]; then
+              echo "⏭️  Branch: $BRANCH - Deployment is NOT REQUIRED"
+              echo "✅ Gracefully exiting (deployment marked as successful)"
+              exit 0
+            fi
+            echo "✅ Branch: $BRANCH - Deployment will proceed"
+
+    - script:
+        interpreter: SHELL
+        description: Validate branch before SSH tasks
+        scripts:
+          - |
+            #!/bin/bash
+            BRANCH="${bamboo.planRepository.branchName}"
+            if [[ "$BRANCH" != "dev-sampah" ]]; then
+              echo "⏭️  Branch: $BRANCH - SSH deployment tasks will be SKIPPED"
+              exit 0
+            fi
+            echo "✅ Branch: $BRANCH - SSH deployment tasks will proceed"
+
+    - ssh:
+        host: ${bamboo.url_host_main_service}
+        command: |-
+          echo "📁 Ensuring bamboo deployment base directory exists..."
+          sudo mkdir -p "${bamboo.server_deployment_base_path}"
+          sudo chown -R secops:secops "${bamboo.server_deployment_base_path}"
+          sudo chmod 775 "${bamboo.server_deployment_base_path}"
+        authentication:
+          username: secops
+          password: BAMSCRT@0@0@L0xDHqNZY4hJbIT0zlHw0g==
+        description: Create deployment base directory
+        conditions:
+          - variable:
+              equals:
+                bamboo.planRepository.branchName: "dev-sampah"
+
+    - scp:
+        host: ${bamboo.url_host_main_service}
+        local-path: zips/publish-${bamboo.service_name}-${bamboo.planRepository.branchName}.zip
+        destination-path: ${bamboo.server_deployment_base_path}
+        authentication:
+          username: secops
+          password: BAMSCRT@0@0@L0xDHqNZY4hJbIT0zlHw0g==
+        description: Copy artifacts to server
+        conditions:
+          - variable:
+              equals:
+                bamboo.planRepository.branchName: "dev-sampah"
+
+    - ssh:
+        host: ${bamboo.url_host_main_service}
+        command: |-
+          #!/bin/bash
+          set -e
+
+          # ============================
+          # CONFIG FROM BAMBOO
+          # ============================
+          ENV="${bamboo.deploy_environment}"
+          SERVICE_NAME="${bamboo.service_name}"
+          BRANCH_NAME="${bamboo.planRepository.branchName}"
+          TIMESTAMP="$(date +"%Y%m%d-%H%M%S")"
+          ZIP_FILE="publish-${SERVICE_NAME}-${BRANCH_NAME}.zip"
+          # ============================
+          # SERVER PATH
+          # ============================
+          UPLOAD_DIR="${bamboo.server_deployment_base_path}"
+          CAP_BASE="${bamboo.server_publish_path}"
+
+          # ============================
+          # UNZIP PROCESS
+          # ============================
+          echo "📦 Unzipping file: $UPLOAD_DIR/$ZIP_FILE ..."
+          unzip -o "$UPLOAD_DIR/$ZIP_FILE" -d "$UPLOAD_DIR"
+
+          PUBLISH_SERVICE_DIR="$UPLOAD_DIR/publish/$SERVICE_NAME"
+
+          # ============================
+          # LOAD ENV FROM ARTIFACT (auto-exported on build agent)
+          # ============================
+          ENV_FILE="$PUBLISH_SERVICE_DIR/.bamboo_env"
+          if [ -f "$ENV_FILE" ]; then
+            echo "🔍 Loading env from $ENV_FILE"
+            set -a
+            # shellcheck disable=SC1090
+            . "$ENV_FILE"
+            set +a
+            echo "✅ Environment loaded"
+          else
+            echo "⚠️  .bamboo_env not found; template replacement may fail"
+          fi
+
+          if [ ! -d "$PUBLISH_SERVICE_DIR" ]; then
+            echo "❌ ERROR: Service folder not found: $PUBLISH_SERVICE_DIR"
+            exit 1
+          fi
+
+          echo "📁 Found service publish folder: $PUBLISH_SERVICE_DIR"
+          echo ""
+
+          # ============================
+          # ENV-SPECIFIC APPSETTINGS
+          # (Do NOT re-zip; mutate after unzip)
+          # ============================
+          TEMPLATE="$PUBLISH_SERVICE_DIR/appsettings.Template.json"
+          OUTPUT="$PUBLISH_SERVICE_DIR/appsettings.$ENV.json"
+          TEMPLATE_SUCCESS=false
+
+          if [ -f "$TEMPLATE" ]; then
+            echo "🔧 Rendering $(basename "$OUTPUT") from template"
+
+            escape_sed_replacement() {
+              # Escape characters that are special in sed replacement strings.
+              # We use '|' as delimiter, so escape: backslash, ampersand, and '|'.
+              printf '%s' "$1" | sed -e 's/[\\&|]/\\\\&/g'
+            }
+
+            CONTENT=$(cat "$TEMPLATE")
+            PLACEHOLDERS=$(grep -o '{{[^}]*}}' "$TEMPLATE" | tr -d '{}' | sort -u)
+
+            MISSING_VARS=false
+            for KEY in $PLACEHOLDERS; do
+              # Convert hyphen → underscore for shell variable lookup
+              ENV_KEY=$(echo "$KEY" | sed 's/-/_/g')
+              VALUE="${!ENV_KEY}"
+
+              if [ -z "$VALUE" ]; then
+                echo "⚠️  Missing Bamboo variable for: {{$KEY}} → $ENV_KEY"
+                MISSING_VARS=true
+              else
+                echo "   🔄 Replacing {{$KEY}}"
+                ESCAPED_VALUE=$(escape_sed_replacement "$VALUE")
+                CONTENT=$(echo "$CONTENT" | sed "s|{{$KEY}}|$ESCAPED_VALUE|g")
+              fi
+            done
+
+            if [ "$MISSING_VARS" = true ]; then
+              echo "⚠️  Template replacement incomplete due to missing variables"
+            else
+              echo "$CONTENT" > "$OUTPUT"
+
+              # Verify no placeholders remain
+              if grep -q '{{' "$OUTPUT"; then
+                echo "⚠️  Unresolved placeholders remain in $OUTPUT"
+              else
+                echo "✅ Generated: $OUTPUT (all placeholders resolved)"
+                TEMPLATE_SUCCESS=true
+              fi
+            fi
+          else
+            echo "ℹ️ appsettings.Template.json not found"
+          fi
+
+          # ============================
+          # FALLBACK: USE EXISTING ENV-SPECIFIC APPSETTINGS
+          # ============================
+          if [ "$TEMPLATE_SUCCESS" = false ]; then
+            echo ""
+            echo "🔄 Attempting fallback to existing appsettings.$ENV.json"
+
+            # Check if env-specific appsettings already exists in publish folder
+            if [ -f "$OUTPUT" ]; then
+              echo "✅ Found existing appsettings.$ENV.json in publish folder"
+              echo "   Using: $OUTPUT"
+            else
+              echo "⚠️  appsettings.$ENV.json not found in publish folder"
+              echo "   This deployment may fail if the application requires environment-specific config"
+            fi
+          fi
+
+          # ============================
+          # DEPLOY SERVICE
+          # ============================
+          echo "🚚 Deploying service: $SERVICE_NAME"
+          echo ""
+
+          SERVICE_RELEASE="$CAP_BASE/$SERVICE_NAME/releases/$TIMESTAMP"
+          SERVICE_CURRENT="$CAP_BASE/$SERVICE_NAME/current"
+
+          echo "📁 Creating release folder:"
+          echo "   $SERVICE_RELEASE"
+          mkdir -p "$SERVICE_RELEASE"
+
+          echo "📂 Copying service content → release folder..."
+          cp -r "$PUBLISH_SERVICE_DIR/"* "$SERVICE_RELEASE/"
+
+          echo "🔗 Updating symlink: current → releases/$TIMESTAMP"
+          ln -sfn "$SERVICE_RELEASE" "$SERVICE_CURRENT"
+
+          echo "✅ $SERVICE_NAME deployed successfully."
+          echo ""
+
+          # ============================
+          # CLEANUP
+          # ============================
+          echo "🧹 Cleaning extracted publish folder..."
+          rm -rf "$UPLOAD_DIR/publish"
+
+          echo "🎉 DEPLOY FINISHED"
+          echo "   Service : $SERVICE_NAME"
+          echo "   Env     : $ENV"
+          echo "   Release : $TIMESTAMP"
+          echo ""
+        authentication:
+          username: secops
+          password: BAMSCRT@0@0@L0xDHqNZY4hJbIT0zlHw0g==
+        description: Deploy service to Capistrano directory structure
+        conditions:
+          - variable:
+              equals:
+                bamboo.planRepository.branchName: "dev-sampah"
+
+    - ssh:
+        host: ${bamboo.url_host_main_service}
+        command: |-
+          #!/bin/bash
+          set -e
+
+          SOURCE_DIR="${bamboo.server_publish_path}"
+          OUTPUT_DIR="${bamboo.server_supervisor_path}"
+          DEPLOY_ENV="${bamboo.deploy_environment}"
+          SERVICE_NAME="${bamboo.service_name}"
+
+          sudo env \
+            SOURCE_DIR="$SOURCE_DIR" \
+            OUTPUT_DIR="$OUTPUT_DIR" \
+            DEPLOY_ENV="$DEPLOY_ENV" \
+            SERVICE_NAME="$SERVICE_NAME" \
+          bash <<'SCRIPT'
+
+          SERVICE_PATH="$SOURCE_DIR/$SERVICE_NAME"
+
+          if [ ! -d "$SERVICE_PATH" ]; then
+            echo "❌ ERROR: Service directory not found: $SERVICE_PATH"
+            exit 1
+          fi
+
+          mkdir -p "$OUTPUT_DIR"
+
+          # Resolve current symlink
+          REAL_CURRENT="$(readlink -f "$SERVICE_PATH/current")"
+
+          if [ ! -d "$REAL_CURRENT" ]; then
+            echo "❌ ERROR: '$SERVICE_PATH/current' is not a valid directory"
+            exit 1
+          fi
+
+          # Prefer deriving entrypoint DLL from the published .deps.json (most reliable).
+          DEPS_FILE=$(find -L "$REAL_CURRENT" -maxdepth 1 -type f -name "*.deps.json" | head -n 1)
+
+          if [ -n "$DEPS_FILE" ]; then
+            DLL_NAME="$(basename "$DEPS_FILE" .deps.json).dll"
+          else
+            DLL_FILE=$(find -L "$REAL_CURRENT" -maxdepth 1 -type f -name "*.dll" | head -n 1)
+            if [ -z "$DLL_FILE" ]; then
+              echo "❌ ERROR: No DLL found in $REAL_CURRENT"
+              exit 1
+            fi
+            DLL_NAME=$(basename "$DLL_FILE")
+          fi
+
+          CONF_FILE="$OUTPUT_DIR/$SERVICE_NAME.conf"
+
+          cat <<TEMPLATE > "$CONF_FILE"
+          [program:$SERVICE_NAME]
+          command=dotnet $DLL_NAME
+          directory=$SERVICE_PATH/current
+          environment=ASPNETCORE_ENVIRONMENT=$DEPLOY_ENV
+          autorestart=true
+          startsecs=1
+          user=root
+          stderr_logfile=/var/log/$SERVICE_NAME.err.log
+          stdout_logfile=/var/log/$SERVICE_NAME.out.log
+          TEMPLATE
+
+          echo "✅ Supervisor config generated:"
+          echo "   $CONF_FILE"
+          echo "   DLL: $DLL_NAME"
+
+          SCRIPT
+        authentication:
+          username: secops
+          password: BAMSCRT@0@0@L0xDHqNZY4hJbIT0zlHw0g==
+        description: Generate Supervisor configuration
+        conditions:
+          - variable:
+              equals:
+                bamboo.planRepository.branchName: "dev-sampah"
+
+    - ssh:
+        host: ${bamboo.url_host_main_service}
+        command: |-
+          #!/bin/bash
+          set -e
+
+          SERVICE_NAME="${bamboo.service_name}"
+
+          echo "🧠 Supervisor control"
+          echo "📦 Service : $SERVICE_NAME"
+          echo
+
+          echo "🔄 supervisorctl reread"
+          sudo supervisorctl reread
+
+          echo "⬆️ supervisorctl update"
+          sudo supervisorctl update
+
+          echo "♻️ supervisorctl restart $SERVICE_NAME"
+          sudo supervisorctl restart "$SERVICE_NAME"
+
+          echo
+          echo "📊 supervisorctl status $SERVICE_NAME"
+          sudo supervisorctl status "$SERVICE_NAME"
+
+          echo
+          echo "✅ Supervisor actions completed successfully"
+        authentication:
+          username: secops
+          password: BAMSCRT@0@0@L0xDHqNZY4hJbIT0zlHw0g==
+        description: Restart service via Supervisor
+        conditions:
+          - variable:
+              equals:
+                bamboo.planRepository.branchName: "dev-sampah"
+
+  artifacts:
+  - name: deploy-zip
+    location: zips
+    pattern: publish-*.zip
+    shared: true
+    required: false
+  - name: publish
+    location: publish
+    pattern: '**/*'
+    shared: true
+    required: false
+  artifact-subscriptions: []
+
+variables:
+  applicationName: mbtl
+  projectName: mbtl-bed-account
+  secret_personalAccessSQ: asfasfafaf
+  service_name: mbtl-bed-account
+  sonarHost: https://sonarqube-enterprise.bri.co.id
+  AccountStatement_Channel: BRIMO-TL
+  AccountStatement_IgnoreSslCertificate: 'true'
+  AccountStatement_IpRequest: 172.18.135.111
+  AccountStatement_MaxYear: '1'
+  AccountStatement_Timeout: '40'
+  AccountStatement_Url: https://api.close.dev.bri.co.id:5556/gateway/apiCustomerHub/1.0/
+  ConnectionStrings_AccountConnection_Database: MBTL_ACCOUNT
+  ConnectionStrings_AccountConnection_Password: asfasfafaf
+  ConnectionStrings_AccountConnection_Server: 172.24.169.100
+  ConnectionStrings_AccountConnection_User: mobile_tl_account
+  ConnectionStrings_CustomerConnection_Database: MBTL_CUSTOMER
+  ConnectionStrings_CustomerConnection_Password: asfasfafaf
+  ConnectionStrings_CustomerConnection_Server: 172.24.169.100
+  ConnectionStrings_CustomerConnection_User: mobile_tl_customer
+  ConnectionStrings_GeneralConnection_Database: MBTL_GENERAL
+  ConnectionStrings_GeneralConnection_Password: asfasfafaf
+  ConnectionStrings_GeneralConnection_Server: 172.24.169.100
+  ConnectionStrings_GeneralConnection_User: mobile_tl_general
+  Obras_TellerId: '0452881'
+  Obras_Url: http://172.18.247.61:9000/graphql
+  deploy_environment: Development
+  server_deployment_base_path: /home/secops/bamboo
+  server_publish_path: /home/secops/var/capistrano-www
+  server_supervisor_path: /etc/capistrano-supervisord.d
+  url_host_main_service: 172.24.169.101
+
+repositories:
+  - mbtl-bed-account:
+      scope: project
+
+branches:
+  create: manually
+  delete: never
+  link-to-jira: true
+
+notifications: []
+labels: []
+
+dependencies:
+  require-all-stages-passing: true
+  enabled-for-branches: true
+  block-strategy: none
+  plans: []
+
+other:
+  concurrent-build-plugin: system-default

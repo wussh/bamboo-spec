@@ -1,0 +1,20 @@
+version: 2
+
+plan:
+  key: MBTL-MBTLSRVAC
+  
+plan-permissions:
+- users:
+  - '00186010'
+  - '00332841'
+  - '00343369'
+  - '00361970'
+  - '00310276'
+  - '70003152'
+  permissions:
+  - view
+  - edit
+  - build
+  - clone
+  - admin
+  - view-configuration

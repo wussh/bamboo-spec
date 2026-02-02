@@ -1,0 +1,357 @@
+version: 2
+
+deployment:
+  name: mbtl-bed-account-cicd
+  source-plan: MBTL-MBTLSRVAC
+
+release-naming:
+  next-version-name: release-1
+  applies-to-branches: false
+  auto-increment: true
+  auto-increment-variables: []
+
+environments:
+  - Development (stable) - 172.24.169.101
+
+Development (stable) - 172.24.169.101:
+  triggers: []
+
+  tasks:
+    - clean
+
+    - script:
+        interpreter: SHELL
+        description: Branch validation (early exit for unsupported branches)
+        scripts:
+          - |
+            #!/bin/bash
+            BRANCH="${bamboo.planRepository.branchName}"
+            if [[ "$BRANCH" != "dev-stable" ]]; then
+              echo "⏭️  Branch: $BRANCH - Deployment is NOT REQUIRED"
+              echo "✅ Gracefully exiting (deployment marked as successful)"
+              exit 0
+            fi
+            echo "✅ Branch: $BRANCH - Deployment will proceed"
+
+    - artifact-download:
+        artifacts:
+          - destination: .
+            name: deploy-zip
+        description: Download deployment zip artifact
+
+    - ssh:
+        host: ${bamboo.url_host_main_service}
+        command: |-
+          echo "📁 Ensuring bamboo deployment base directory exists..."
+          sudo mkdir -p "${bamboo.server_deployment_base_path}"
+          sudo chown -R secops:secops "${bamboo.server_deployment_base_path}"
+          sudo chmod 775 "${bamboo.server_deployment_base_path}"
+        authentication:
+          username: secops
+          password: BAMSCRT@0@0@L0xDHqNZY4hJbIT0zlHw0g==
+        description: Create deployment base directory
+
+    - scp:
+        host: ${bamboo.url_host_main_service}
+        local-path: publish-${bamboo.service_name}-${bamboo.planRepository.branchName}.zip
+        destination-path: ${bamboo.server_deployment_base_path}
+        authentication:
+          username: secops
+          password: BAMSCRT@0@0@L0xDHqNZY4hJbIT0zlHw0g==
+        description: Copy artifacts to server
+
+    - ssh:
+        host: ${bamboo.url_host_main_service}
+        command: |-
+          #!/bin/bash
+          set -e
+
+          # ============================
+          # CONFIG FROM BAMBOO
+          # ============================
+          ENV="${bamboo.deploy_environment}"
+          SERVICE_NAME="${bamboo.service_name}"
+          BRANCH_NAME="${bamboo.planRepository.branchName}"
+          TIMESTAMP="$(date +"%Y%m%d-%H%M%S")"
+          ZIP_FILE="publish-${SERVICE_NAME}-${BRANCH_NAME}.zip"
+          # ============================
+          # SERVER PATH
+          # ============================
+          UPLOAD_DIR="${bamboo.server_deployment_base_path}"
+          CAP_BASE="${bamboo.server_publish_path}"
+
+          # ============================
+          # UNZIP PROCESS
+          # ============================
+          echo "📦 Unzipping file: $UPLOAD_DIR/$ZIP_FILE ..."
+          unzip -o "$UPLOAD_DIR/$ZIP_FILE" -d "$UPLOAD_DIR"
+
+          PUBLISH_SERVICE_DIR="$UPLOAD_DIR/publish/$SERVICE_NAME"
+
+          # ============================
+          # LOAD ENV FROM ARTIFACT (auto-exported on build agent)
+          # ============================
+          ENV_FILE="$PUBLISH_SERVICE_DIR/.bamboo_env"
+          if [ -f "$ENV_FILE" ]; then
+            echo "🔍 Loading env from $ENV_FILE"
+            set -a
+            # shellcheck disable=SC1090
+            . "$ENV_FILE"
+            set +a
+            echo "✅ Environment loaded"
+          else
+            echo "⚠️  .bamboo_env not found; template replacement may fail"
+          fi
+
+          if [ ! -d "$PUBLISH_SERVICE_DIR" ]; then
+            echo "❌ ERROR: Service folder not found: $PUBLISH_SERVICE_DIR"
+            exit 1
+          fi
+
+          echo "📁 Found service publish folder: $PUBLISH_SERVICE_DIR"
+          echo ""
+
+          # ============================
+          # ENV-SPECIFIC APPSETTINGS
+          # (Do NOT re-zip; mutate after unzip)
+          # ============================
+          TEMPLATE="$PUBLISH_SERVICE_DIR/appsettings.Template.json"
+          OUTPUT="$PUBLISH_SERVICE_DIR/appsettings.$ENV.json"
+          TEMPLATE_SUCCESS=false
+
+          if [ -f "$TEMPLATE" ]; then
+            echo "🔧 Rendering $(basename "$OUTPUT") from template"
+
+            escape_sed_replacement() {
+              # Escape characters that are special in sed replacement strings.
+              # We use '|' as delimiter, so escape: backslash, ampersand, and '|'.
+              printf '%s' "$1" | sed -e 's/[\\&|]/\\\\&/g'
+            }
+
+            CONTENT=$(cat "$TEMPLATE")
+            PLACEHOLDERS=$(grep -o '{{[^}]*}}' "$TEMPLATE" | tr -d '{}' | sort -u)
+
+            MISSING_VARS=false
+            for KEY in $PLACEHOLDERS; do
+              # Convert hyphen → underscore for shell variable lookup
+              ENV_KEY=$(echo "$KEY" | sed 's/-/_/g')
+              VALUE="${!ENV_KEY}"
+
+              if [ -z "$VALUE" ]; then
+                echo "⚠️  Missing Bamboo variable for: {{$KEY}} → $ENV_KEY"
+                MISSING_VARS=true
+              else
+                echo "   🔄 Replacing {{$KEY}}"
+                ESCAPED_VALUE=$(escape_sed_replacement "$VALUE")
+                CONTENT=$(echo "$CONTENT" | sed "s|{{$KEY}}|$ESCAPED_VALUE|g")
+              fi
+            done
+
+            if [ "$MISSING_VARS" = true ]; then
+              echo "⚠️  Template replacement incomplete due to missing variables"
+            else
+              echo "$CONTENT" > "$OUTPUT"
+
+              # Verify no placeholders remain
+              if grep -q '{{' "$OUTPUT"; then
+                echo "⚠️  Unresolved placeholders remain in $OUTPUT"
+              else
+                echo "✅ Generated: $OUTPUT (all placeholders resolved)"
+                TEMPLATE_SUCCESS=true
+              fi
+            fi
+          else
+            echo "ℹ️ appsettings.Template.json not found"
+          fi
+
+          # ============================
+          # FALLBACK: USE EXISTING ENV-SPECIFIC APPSETTINGS
+          # ============================
+          if [ "$TEMPLATE_SUCCESS" = false ]; then
+            echo ""
+            echo "🔄 Attempting fallback to existing appsettings.$ENV.json"
+
+            # Check if env-specific appsettings already exists in publish folder
+            if [ -f "$OUTPUT" ]; then
+              echo "✅ Found existing appsettings.$ENV.json in publish folder"
+              echo "   Using: $OUTPUT"
+            else
+              echo "⚠️  appsettings.$ENV.json not found in publish folder"
+              echo "   This deployment may fail if the application requires environment-specific config"
+            fi
+          fi
+
+          # ============================
+          # DEPLOY SERVICE
+          # ============================
+          echo "🚚 Deploying service: $SERVICE_NAME"
+          echo ""
+
+          SERVICE_RELEASE="$CAP_BASE/$SERVICE_NAME/releases/$TIMESTAMP"
+          SERVICE_CURRENT="$CAP_BASE/$SERVICE_NAME/current"
+
+          echo "📁 Creating release folder:"
+          echo "   $SERVICE_RELEASE"
+          mkdir -p "$SERVICE_RELEASE"
+
+          echo "📂 Copying service content → release folder..."
+          cp -r "$PUBLISH_SERVICE_DIR/"* "$SERVICE_RELEASE/"
+
+          echo "🔗 Updating symlink: current → releases/$TIMESTAMP"
+          ln -sfn "$SERVICE_RELEASE" "$SERVICE_CURRENT"
+
+          echo "✅ $SERVICE_NAME deployed successfully."
+          echo ""
+
+          # ============================
+          # CLEANUP
+          # ============================
+          echo "🧹 Cleaning extracted publish folder..."
+          rm -rf "$UPLOAD_DIR/publish"
+
+          echo "🎉 DEPLOY FINISHED"
+          echo "   Service : $SERVICE_NAME"
+          echo "   Env     : $ENV"
+          echo "   Release : $TIMESTAMP"
+          echo ""
+        authentication:
+          username: secops
+          password: BAMSCRT@0@0@L0xDHqNZY4hJbIT0zlHw0g==
+        description: Deploy service to Capistrano directory structure
+
+    - ssh:
+        host: ${bamboo.url_host_main_service}
+        command: |-
+          #!/bin/bash
+          set -e
+
+          SOURCE_DIR="${bamboo.server_publish_path}"
+          OUTPUT_DIR="${bamboo.server_supervisor_path}"
+          DEPLOY_ENV="${bamboo.deploy_environment}"
+          SERVICE_NAME="${bamboo.service_name}"
+
+          sudo env \
+            SOURCE_DIR="$SOURCE_DIR" \
+            OUTPUT_DIR="$OUTPUT_DIR" \
+            DEPLOY_ENV="$DEPLOY_ENV" \
+            SERVICE_NAME="$SERVICE_NAME" \
+          bash <<'SCRIPT'
+
+          SERVICE_PATH="$SOURCE_DIR/$SERVICE_NAME"
+
+          if [ ! -d "$SERVICE_PATH" ]; then
+            echo "❌ ERROR: Service directory not found: $SERVICE_PATH"
+            exit 1
+          fi
+
+          mkdir -p "$OUTPUT_DIR"
+
+          # Resolve current symlink
+          REAL_CURRENT="$(readlink -f "$SERVICE_PATH/current")"
+
+          if [ ! -d "$REAL_CURRENT" ]; then
+            echo "❌ ERROR: '$SERVICE_PATH/current' is not a valid directory"
+            exit 1
+          fi
+
+          # Prefer deriving entrypoint DLL from the published .deps.json (most reliable).
+          DEPS_FILE=$(find -L "$REAL_CURRENT" -maxdepth 1 -type f -name "*.deps.json" | head -n 1)
+
+          if [ -n "$DEPS_FILE" ]; then
+            DLL_NAME="$(basename "$DEPS_FILE" .deps.json).dll"
+          else
+            DLL_FILE=$(find -L "$REAL_CURRENT" -maxdepth 1 -type f -name "*.dll" | head -n 1)
+            if [ -z "$DLL_FILE" ]; then
+              echo "❌ ERROR: No DLL found in $REAL_CURRENT"
+              exit 1
+            fi
+            DLL_NAME=$(basename "$DLL_FILE")
+          fi
+
+          CONF_FILE="$OUTPUT_DIR/$SERVICE_NAME.conf"
+
+          cat <<TEMPLATE > "$CONF_FILE"
+          [program:$SERVICE_NAME]
+          command=dotnet $DLL_NAME
+          directory=$SERVICE_PATH/current
+          environment=ASPNETCORE_ENVIRONMENT=$DEPLOY_ENV
+          autorestart=true
+          startsecs=1
+          user=root
+          stderr_logfile=/var/log/$SERVICE_NAME.err.log
+          stdout_logfile=/var/log/$SERVICE_NAME.out.log
+          TEMPLATE
+
+          echo "✅ Supervisor config generated:"
+          echo "   $CONF_FILE"
+          echo "   DLL: $DLL_NAME"
+
+          SCRIPT
+        authentication:
+          username: secops
+          password: BAMSCRT@0@0@L0xDHqNZY4hJbIT0zlHw0g==
+        description: Generate Supervisor configuration
+
+    - ssh:
+        host: ${bamboo.url_host_main_service}
+        command: |-
+          #!/bin/bash
+          set -e
+
+          SERVICE_NAME="${bamboo.service_name}"
+
+          echo "🧠 Supervisor control"
+          echo "📦 Service : $SERVICE_NAME"
+          echo
+
+          echo "🔄 supervisorctl reread"
+          sudo supervisorctl reread
+
+          echo "⬆️ supervisorctl update"
+          sudo supervisorctl update
+
+          echo "♻️ supervisorctl restart $SERVICE_NAME"
+          sudo supervisorctl restart "$SERVICE_NAME"
+
+          echo
+          echo "📊 supervisorctl status $SERVICE_NAME"
+          sudo supervisorctl status "$SERVICE_NAME"
+
+          echo
+          echo "✅ Supervisor actions completed successfully"
+        authentication:
+          username: secops
+          password: BAMSCRT@0@0@L0xDHqNZY4hJbIT0zlHw0g==
+        description: Restart service via Supervisor
+
+  final-tasks: []
+
+  variables:
+    AccountStatement_Channel: BRIMO-TL
+    AccountStatement_IgnoreSslCertificate: 'true'
+    AccountStatement_IpRequest: 172.18.135.111
+    AccountStatement_MaxYear: '1'
+    AccountStatement_Timeout: '40'
+    AccountStatement_Url: https://api.close.dev.bri.co.id:5556/gateway/apiCustomerHub/1.0/
+    ConnectionStrings_AccountConnection_Database: MBTL_ACCOUNT
+    ConnectionStrings_AccountConnection_Password: asfasfafaf
+    ConnectionStrings_AccountConnection_Server: 172.24.169.100
+    ConnectionStrings_AccountConnection_User: mobile_tl_account
+    ConnectionStrings_CustomerConnection_Database: MBTL_CUSTOMER
+    ConnectionStrings_CustomerConnection_Password: asfasfafaf
+    ConnectionStrings_CustomerConnection_Server: 172.24.169.100
+    ConnectionStrings_CustomerConnection_User: mobile_tl_customer
+    ConnectionStrings_GeneralConnection_Database: MBTL_GENERAL
+    ConnectionStrings_GeneralConnection_Password: asfasfafaf
+    ConnectionStrings_GeneralConnection_Server: 172.24.169.100
+    ConnectionStrings_GeneralConnection_User: mobile_tl_general
+    Obras_TellerId: '0452881'
+    Obras_Url: http://172.18.247.61:9000/graphql
+    deploy_environment: Development
+    server_deployment_base_path: /home/secops/bamboo
+    server_publish_path: /home/secops/var/capistrano-www
+    server_supervisor_path: /etc/capistrano-supervisord.d
+    service_name: mbtl-bed-account
+    url_host_main_service: 172.24.169.101
+  requirements: []
+  notifications: []

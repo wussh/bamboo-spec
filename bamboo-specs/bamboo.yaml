@@ -1,0 +1,8 @@
+---
+!include builds/mbtl-bed-account-build-plan.yaml
+---
+!include builds/mbtl-bed-account-permission.yaml
+---
+!include deployments/mbtl-bed-account-deployment-plan.yaml
+---
+!include deployments/mbtl-bed-account-permission.yaml
