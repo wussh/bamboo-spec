@@ -5,10 +5,7 @@ deployment:
 
 deployment-permissions:
   - users:
-      - '00332841'
-      - '00310276'
-      - '00361970'
-      - '70003152'
+      - 'admin'
     permissions:
       - view
       - edit
@@ -17,16 +14,14 @@ deployment-permissions:
 environment-permissions:
   - "Development (stable) - 172.24.169.101":
       - users:
-          - '00332841'
-          - '00310276'
+          - 'admin'
         permissions:
           - view
           - edit
           - deploy
           - view-configuration
       - users:
-          - '00361970'
-          - '70003152'
+          - 'admin'
         permissions:
           - view
           - edit
